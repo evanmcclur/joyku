@@ -75,7 +75,13 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
 
-	rokuDevice := roku.NewDevice()
+	rokuConfig, err := roku.NewRokuConfig()
+	if err != nil {
+		logger.Error("could not create roku config", "error", err.Error())
+		return
+	}
+
+	rokuDevice := roku.NewDevice(rokuConfig)
 	roku.QueryDevice(rokuDevice)
 
 	logger.Info("attempting to ping roku device", "name", rokuDevice.Name)
