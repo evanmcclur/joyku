@@ -1,4 +1,4 @@
-package roku
+package config
 
 import "github.com/spf13/viper"
 
@@ -12,10 +12,13 @@ type RokuConfig struct {
 func NewRokuConfig() (*RokuConfig, error) {
 	rc := &RokuConfig{}
 
-	viper.AddConfigPath("../../")
+	viper.AddConfigPath("../")
 	viper.SetConfigName("roku")
 	viper.SetConfigType("env")
 	viper.AutomaticEnv()
+
+	viper.SetDefault("ROKU_IP", "127.0.0.1")
+	viper.SetDefault("ROKU_PORT", "8060")
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err

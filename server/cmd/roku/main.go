@@ -1,6 +1,7 @@
 package main
 
 import (
+	"gocon/cmd/roku/config"
 	"gocon/pkg/joycon"
 	"gocon/pkg/roku"
 	"log/slog"
@@ -75,18 +76,15 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
 
-	rokuConfig, err := roku.NewRokuConfig()
+	cfg, err := config.NewRokuConfig()
 	if err != nil {
 		logger.Error("could not create roku config", "error", err.Error())
 		return
 	}
 
-	rokuDevice := roku.NewDevice(rokuConfig)
-	roku.QueryDevice(rokuDevice)
-
-	logger.Info("attempting to ping roku device", "name", rokuDevice.Name)
-	if ok, err := roku.PingDevice(rokuDevice); !ok {
-		logger.Error("could not ping roku device", "error", err.Error())
+	rokuDevice := roku.NewDevice(cfg.Ip, cfg.Port)
+	if err := roku.QueryDevice(rokuDevice); err != nil {
+		logger.Error("could not connect to roku device", "error", err.Error())
 		return
 	}
 
@@ -106,14 +104,18 @@ func main() {
 		defer jc.Disconnect()
 	}
 
-	go CheckDeviceConnection(logger, rokuDevice, quit)
+	// go CheckDeviceConnection(logger, rokuDevice, quit)
 
 	da := NewDirectionAggregator()
 
 	for {
 		select {
-		case js := <-joyconDevice.Status():
-			go TranslateJoyconStatus(logger, js, da, rokuDevice)
+		case js, ok := <-joyconDevice.Status():
+			if !ok {
+				quit <- os.Interrupt
+				break
+			}
+			TranslateJoyconStatus(logger, js, da, rokuDevice)
 		case <-quit:
 			logger.Info("received sigterm - shutting down")
 			return
@@ -135,7 +137,7 @@ func CheckDeviceConnection(logger *slog.Logger, r *roku.RokuDevice, quit chan os
 			if ok {
 				// logger.Info("device is reachable")
 				reconnectAttempts = 0
-			} else if !ok && reconnectAttempts < DeviceReconnectAttempts {
+			} else if reconnectAttempts < DeviceReconnectAttempts {
 				reconnectAttempts += 1
 				logger.Error("device is not reachable, attempting to reconnect", "attempts", reconnectAttempts)
 			} else {
@@ -152,22 +154,18 @@ func CheckDeviceConnection(logger *slog.Logger, r *roku.RokuDevice, quit chan os
 func TranslateJoyconStatus(logger *slog.Logger, js *joycon.JoyconStatus, da *DirectionAggregator, rd *roku.RokuDevice) {
 	da.Add(js.JoystickData.Direction)
 
-	if da.Count() == 12 {
+	if da.Count() == 11 {
 		switch da.maxDirection {
 		case joycon.None:
-			logger.Debug("Sending keypress commands: (None)")
+			break
 		case joycon.StickUp:
-			logger.Debug("Sending keypress commands", "command", roku.KeyUp.String())
-			roku.SendKeypress(rd, roku.KeyUp)
+			rd.SendKeypress(roku.KeyUp)
 		case joycon.StickRight:
-			logger.Debug("Sending keypress commands", "command", roku.KeyRight.String())
-			roku.SendKeypress(rd, roku.KeyRight)
+			rd.SendKeypress(roku.KeyRight)
 		case joycon.StickDown:
-			logger.Debug("Sending keypress commands", "command", roku.KeyDown.String())
-			roku.SendKeypress(rd, roku.KeyDown)
+			rd.SendKeypress(roku.KeyDown)
 		case joycon.StickLeft:
-			logger.Debug("Sending keypress commands", "command", roku.KeyLeft.String())
-			roku.SendKeypress(rd, roku.KeyLeft)
+			rd.SendKeypress(roku.KeyLeft)
 		default:
 			logger.Warn("unsupported direction value", "direction", da.maxDirection.String())
 		}
@@ -175,10 +173,12 @@ func TranslateJoyconStatus(logger *slog.Logger, js *joycon.JoyconStatus, da *Dir
 	}
 
 	if js.ButtonA {
-		roku.SendKeypress(rd, roku.KeySelect)
-		logger.Debug("Sending keypress commands", "command", roku.KeySelect.String())
+		rd.SendKeypress(roku.KeySelect)
 	} else if js.ButtonB {
-		roku.SendKeypress(rd, roku.KeyBack)
-		logger.Debug("Sending keypress commands", "command", roku.KeyBack.String())
+		rd.SendKeypress(roku.KeyBack)
+	} else if js.ButtonHome {
+		rd.SendKeypress(roku.KeyHome)
+	} else {
+		rd.SendKeypress(roku.None)
 	}
 }

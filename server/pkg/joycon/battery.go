@@ -4,12 +4,12 @@ package joycon
 type BatteryLevel byte
 
 const (
-	Invalid  BatteryLevel = 0xF
-	Full     BatteryLevel = 0x08
-	Medium   BatteryLevel = 0x06
-	Low      BatteryLevel = 0x04
-	Critical BatteryLevel = 0x02
 	Empty    BatteryLevel = 0x00
+	Critical BatteryLevel = 0x02
+	Low      BatteryLevel = 0x04
+	Medium   BatteryLevel = 0x06
+	Full     BatteryLevel = 0x08
+	Invalid  BatteryLevel = 0xFF
 )
 
 var byteToBatteryMap = map[byte]BatteryLevel{

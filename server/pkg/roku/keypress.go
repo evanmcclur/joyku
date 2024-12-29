@@ -1,8 +1,13 @@
 package roku
 
+import (
+	"time"
+)
+
 type Keypress string
 
 const (
+	None             Keypress = "None" // Represents no key being pressed
 	KeyHome          Keypress = "Home" // Home takes you back to home tab on Roku device
 	KeyRev           Keypress = "Rev"
 	KeyFwd           Keypress = "Fwd"
@@ -33,4 +38,25 @@ const (
 
 func (k Keypress) String() string {
 	return string(k)
+}
+
+type ECPCommand string
+
+const (
+	Press   ECPCommand = "keypress"
+	Release ECPCommand = "keyup"
+	Hold    ECPCommand = "keydown"
+)
+
+type RokuKeyState struct {
+	previousKey Keypress
+	keyTime     time.Time
+	holding     bool
+}
+
+func NewRokuKeyState() *RokuKeyState {
+	rka := &RokuKeyState{}
+	rka.previousKey = None
+	rka.holding = false
+	return rka
 }

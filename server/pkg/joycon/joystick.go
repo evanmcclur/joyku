@@ -9,6 +9,7 @@ type StickDirection uint8
 
 const (
 	InvalidStickDirection StickDirection = iota
+	None
 	StickUp
 	StickUpperRight
 	StickRight
@@ -17,7 +18,6 @@ const (
 	StickLowerLeft
 	StickLeft
 	StickUpperLeft
-	None
 )
 
 func (d StickDirection) String() string {
@@ -59,7 +59,7 @@ type StickCalibration struct {
 	YAxisCenter         uint16
 	YAxisMinBelowCenter uint16
 	YAxisMaxAboveCenter uint16
-	Deadzone            uint16
+	Deadzone            uint8
 }
 
 func unmarshalLeftStickCalibration(calibration []byte) StickCalibration {
@@ -93,9 +93,7 @@ func calculateStickDirection(sd StickData, sc StickCalibration) StickDirection {
 	stick_x_center := float64((stick_x_min + stick_x_max) / 2)
 	stick_y_center := float64((stick_y_min + stick_y_max) / 2)
 
-	// TODO: use sc.Deadzone instead
-	deadzone := 174.0
-	if math.Pow((float64(sd.Horizontal)-stick_x_center), 2)+math.Pow((float64(sd.Vertical)-stick_y_center), 2) < math.Pow(deadzone, 2) {
+	if math.Pow((float64(sd.Horizontal)-stick_x_center), 2)+math.Pow((float64(sd.Vertical)-stick_y_center), 2) < math.Pow(float64(sc.Deadzone), 2) {
 		// joystick is within deadzone - no direction
 		return None
 	}

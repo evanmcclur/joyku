@@ -2,7 +2,6 @@ package subcommand
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/sstallion/go-hid"
 )
@@ -53,21 +52,21 @@ func Send(d *hid.Device, sid SubcommandId, sd []byte) error {
 		globalPacketNumber++
 	}
 
-	arrayCopy(buf, RumbleData, 2)
+	bufferCopy(buf, RumbleData, 2)
 	// Set subcommand id and data
 	buf[10] = sid.Byte()
-	arrayCopy(buf, sd, 11)
+	bufferCopy(buf, sd, 11)
 
-	br, err := d.Write(buf)
+	_, err := d.Write(buf)
 	if err != nil {
 		return fmt.Errorf("could not write to device: %s", err.Error())
 	}
-	log.Printf("wrote %v (%d) bytes to device", buf, br)
+	// log.Printf("wrote %v (%d) bytes to device", buf, br)
 	return nil
 }
 
-// arrayCopy copies all the data from src to dst starting at start
-func arrayCopy(dst []byte, src []byte, start int) error {
+// bufferCopy copies all the data from src to dst starting at start
+func bufferCopy(dst []byte, src []byte, start int) error {
 	dl := len(dst)
 	sl := len(src)
 

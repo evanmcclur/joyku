@@ -2,6 +2,7 @@ package joycon
 
 import (
 	"fmt"
+	"gocon/internal/report"
 	"gocon/internal/spi"
 	"gocon/internal/subcommand"
 	"image/color"
@@ -95,16 +96,19 @@ func (js *JoyconStatus) String() string {
 
 // Joycon is the representation of the underlying HID device for a Nintendo Switch Joycon attached to the system
 type Joycon struct {
-	VendorId         uint16             // This will always be 0x057E
-	ProductId        uint16             // This will either be 0x2006 or 0x2007 depending on if its the left or right
-	Serial           string             // The serial string of the hid device
-	Name             string             // The name (product str) of the hid device
-	BodyColor        color.Color        // The body color of this joycon
-	ButtonColor      color.Color        // The color of this joycons buttons
-	StickCalibration StickCalibration   // The stick calibration data for this joycons joystick
-	statusC          chan *JoyconStatus // Channel for receiving joycon status updates
-	device           *hid.Device        // The underlying HID device for this joycon - set after calling Open()
-	lock             sync.Mutex         // Internal lock for reading/writing from the state of the joycon
+	VendorId         uint16              // This will always be 0x057E
+	ProductId        uint16              // This will either be 0x2006 or 0x2007 depending on if its the left or right
+	Serial           string              // The serial string of the hid device
+	Name             string              // The name (product str) of the hid device
+	BodyColor        color.Color         // The body color of this joycon
+	ButtonColor      color.Color         // The color of this joycons buttons
+	StickCalibration StickCalibration    // The stick calibration data for this joycons joystick
+	statusC          chan *JoyconStatus  // Channel for receiving joycon status updates
+	directionC       chan StickDirection // Channel for receiving joycon stick direction updates
+	buttonListeners  []ButtonListener    // Array of button listeners
+	device           *hid.Device         // The underlying HID device for this joycon - set after calling Open()
+	lock             sync.Mutex          // Internal lock for reading/writing from the state of the joycon
+	closed           bool                // If this joycon was closed
 }
 
 // Map of connected joycons
@@ -177,17 +181,43 @@ func (j *Joycon) IsRight() bool {
 	return j.ProductId == RightJoyconProductId
 }
 
+// Status exposes a readonly channel for parsing joycon status packets
+func (j *Joycon) Status() <-chan *JoyconStatus {
+	return j.statusC
+}
+
+func (j *Joycon) DirectionStatus() <-chan StickDirection {
+	return j.directionC
+}
+
+func (j *Joycon) RegisterButtonListener(listener ButtonListener) {
+	j.buttonListeners = append(j.buttonListeners, listener)
+}
+
+func (j *Joycon) notifyButtonListeners(button *Button) {
+	for _, listener := range j.buttonListeners {
+		for _, handler := range listener.Handlers() {
+			handler(button)
+		}
+		listener.Receive(button)
+	}
+}
+
+// Connect creates a connection to a Joycon device connected to this system (if one isn't already established)
 func (j *Joycon) Connect() error {
+	// If we're already connected to a device, return no error
 	if j.device != nil {
 		return nil
 	}
 
+	// Open connection to HID device (Joycon)
 	d, err := hid.Open(j.VendorId, j.ProductId, j.Serial)
 	if err != nil {
 		return err
 	}
 	j.device = d
 
+	// Read static configuration values from Joycon SPI flash
 	err = readColorDataFromSPIFlash(j)
 	if err != nil {
 		log.Printf("error while reading from spi flash - %s", err.Error())
@@ -199,6 +229,7 @@ func (j *Joycon) Connect() error {
 		return err
 	}
 
+	// Enable IMU so we can receive accelerometer and gyroscope data
 	data := []byte{0x01}
 	err = subcommand.Send(j.device, subcommand.EnableIMU, data)
 	if err != nil {
@@ -208,6 +239,7 @@ func (j *Joycon) Connect() error {
 	log.Printf("enabling IMU..")
 	time.Sleep(time.Millisecond * 500)
 
+	// Enable vibration
 	data = []byte{0x01}
 	err = subcommand.Send(j.device, subcommand.EnableVibration, data)
 	if err != nil {
@@ -217,56 +249,145 @@ func (j *Joycon) Connect() error {
 	log.Printf("enabling vibration..")
 	time.Sleep(time.Millisecond * 500)
 
+	// Configure Joycon to Input Report Mode which outputs its status at 60hz
 	data = []byte{0x30}
 	err = subcommand.Send(j.device, subcommand.SetInputReportMode, data)
 	if err != nil {
 		return err
 	}
 
-	go j.startStatusUpdates()
+	// Read from joycon in a separate thread
+	go j.readStatus()
+
 	return nil
 }
 
+// Disconnect closes connection to the Joycon (Note: This function will disconnect joycon from the system)
 func (j *Joycon) Disconnect() error {
+	j.lock.Lock()
 	defer hid.Exit()
-
-	log.Printf("attempting to disconnect joycon..")
-	data := []byte{0x00}
-	subcommand.Send(j.device, subcommand.SetHCIState, data)
-	return j.device.Close()
+	var err error = nil
+	if !j.closed {
+		j.closed = true
+		// disconnect joycon from system
+		data := []byte{0x00} // turn off
+		subcommand.Send(j.device, subcommand.SetHCIState, data)
+		err = j.device.Close()
+	}
+	j.lock.Unlock()
+	return err
 }
 
-// Status exposes a readonly channel for parsing joycon status packets
-func (j *Joycon) Status() <-chan *JoyconStatus {
-	return j.statusC
-}
-
-func (j *Joycon) startStatusUpdates() {
+func (j *Joycon) readStatus() {
 	buf := make([]byte, subcommand.ReportLengthBytes)
 
-	// it may not really matter if we block or not since this loop is running its own thread
-	// for the lifetime of the program
-	err := j.device.SetNonblock(true)
-	if err != nil {
-		log.Fatalf("could not enable non-blocking mode on device %s\n", j.Name)
-	}
-
+	// TODO: add a channel to stop this loop if we disconnect
 	log.Println("starting reading input report loop")
 	for {
 		_, err := j.device.Read(buf)
-		// if the error is a timeout, ignore it, otherwise break from loop and log
-		if err != nil && err.Error() != "timeout" {
-			log.Fatalf("could not read from device %s\n", err.Error())
-		}
-
-		// no new data available, skip
 		if err != nil {
-			continue
+			log.Printf("could not read from device %s\n", err.Error())
+			break
 		}
 
-		js := ParseInputReport(j, buf)
+		js := parseInputReport(j, buf)
 		j.statusC <- js
 	}
+
+	close(j.statusC)
+	j.Disconnect()
+}
+
+func parseInputReport(joycon *Joycon, reportData []byte) *JoyconStatus {
+	reportId := reportData[0]
+	if reportId != report.StandardInputReportWithReplies.Byte() && reportId != report.StandardFullMode.Byte() && reportId != report.NFCIRMode.Byte() {
+		log.Printf("received unsupported input report: %d", reportId)
+		return nil
+	}
+
+	joyconStatus := new(JoyconStatus)
+	if joycon.IsLeft() {
+		joyconStatus = parseLeftJoyconStatus(reportData, joycon.StickCalibration)
+	} else if joycon.IsRight() {
+		joyconStatus = parseRightJoyconStatus(reportData, joycon.StickCalibration)
+	}
+	return joyconStatus
+
+	// Axis data is only set for these input reports
+	// if reportId == byte(report.StandardFullMode) || reportId == byte(report.NFCIRMode) {
+
+	// }
+}
+
+func parseLeftJoyconStatus(report []byte, sc StickCalibration) *JoyconStatus {
+	js := new(JoyconStatus)
+
+	batteryAndConnection := report[2]
+	js.BatteryLevel = BatteryFromByte((batteryAndConnection >> 4) & 0xF)
+	js.ConnectionKind = (batteryAndConnection >> 1) & 0x03
+
+	// Button states
+	leftButtons := report[5]
+	sharedButtons := report[4]
+
+	js.DPadDown = (leftButtons & 0x01) != 0
+	js.DPadUp = ((leftButtons & 0x02) >> 1) != 0
+	js.DPadRight = ((leftButtons & 0x04) >> 2) != 0
+	js.DPadLeft = ((leftButtons & 0x08) >> 3) != 0
+	js.LeftButtonSR = ((leftButtons & 0x10) >> 4) != 0
+	js.LeftButtonSL = ((leftButtons & 0x20) >> 5) != 0
+	js.ButtonL = ((leftButtons & 0x40) >> 6) != 0
+	js.ButtonZL = ((leftButtons & 0x80) >> 7) != 0
+
+	js.ButtonMinus = (sharedButtons & 0x01) != 0
+	js.LeftStickPress = ((sharedButtons & 0x08) >> 3) != 0
+	js.ButtonCapture = ((sharedButtons & 0x20) >> 5) != 0
+	js.ButtonChargingGrip = ((sharedButtons & 0x80) >> 7) != 0
+
+	leftStickData := report[6:9]
+
+	js.JoystickData = StickData{
+		Horizontal: uint16(leftStickData[0]) | ((uint16(leftStickData[1] & 0xF)) << 8),
+		Vertical:   uint16(leftStickData[1]>>4) | uint16(leftStickData[2])<<4,
+	}
+	js.JoystickData.Direction = calculateStickDirection(js.JoystickData, sc)
+
+	return js
+}
+
+func parseRightJoyconStatus(report []byte, sc StickCalibration) *JoyconStatus {
+	js := new(JoyconStatus)
+	batteryAndConnection := report[2]
+	js.BatteryLevel = BatteryFromByte((batteryAndConnection >> 4) & 0xF)
+	js.ConnectionKind = (batteryAndConnection >> 1) & 0x03
+
+	// Button states
+	rightButtons := report[3]
+	sharedButtons := report[4]
+
+	js.ButtonY = (rightButtons & 0x01) != 0
+	js.ButtonX = ((rightButtons & 0x02) >> 1) != 0
+	js.ButtonB = ((rightButtons & 0x04) >> 2) != 0
+	js.ButtonA = ((rightButtons & 0x08) >> 3) != 0
+	js.RightButtonSR = ((rightButtons & 0x10) >> 4) != 0
+	js.RightButtonSL = ((rightButtons & 0x20) >> 5) != 0
+	js.ButtonR = ((rightButtons & 0x40) >> 6) != 0
+	js.ButtonZR = ((rightButtons & 0x80) >> 7) != 0
+
+	js.ButtonPlus = ((sharedButtons & 0x02) >> 1) != 0
+	js.RightStickPress = ((sharedButtons & 0x04) >> 2) != 0
+	js.ButtonHome = ((sharedButtons & 0x10) >> 4) != 0
+	js.ButtonChargingGrip = ((sharedButtons & 0x80) >> 7) != 0
+
+	rightStickData := report[9:12]
+
+	js.JoystickData = StickData{
+		Horizontal: uint16(rightStickData[0]) | ((uint16(rightStickData[1] & 0xF)) << 8),
+		Vertical:   uint16(rightStickData[1]>>4) | uint16(rightStickData[2])<<4,
+	}
+	js.JoystickData.Direction = calculateStickDirection(js.JoystickData, sc)
+
+	return js
 }
 
 // ReadColorDataFromSPIFlash reads SPI flash memory on j and stores it in j
@@ -345,20 +466,20 @@ func readStickCalibrationFromSPIFlash(j *Joycon) error {
 	}
 
 	// TODO: cleanup
-	// if j.IsLeft() {
-	// 	address = spi.LeftStickDeviceParameters
-	// } else if j.IsRight() {
-	// 	address = spi.RightStickDeviceParameters
-	// } else {
-	// 	return fmt.Errorf("unknown joycon product id %d", j.ProductId)
-	// }
+	if j.IsLeft() {
+		address = spi.LeftStickDeviceParameters
+	} else if j.IsRight() {
+		address = spi.RightStickDeviceParameters
+	} else {
+		return fmt.Errorf("unknown joycon product id %d", j.ProductId)
+	}
 
-	// sfc = spi.SPIFlashReadCommand{Address: address, Size: 18}
-	// data, err = spi.ReadFromSPIFlash(j, p, sfc)
-	// if err != nil {
-	// 	return err
-	// }
-	// log.Printf("Stick device parameters: %v", data)
+	sfc = spi.SPIFlashReadCommand{Address: address, Size: 5}
+	data, err = spi.ReadFromSPIFlash(j.device, sfc)
+	if err != nil {
+		return err
+	}
+	deadzone := uint8(data[3])
 
 	j.lock.Lock()
 	defer j.lock.Unlock()
@@ -366,12 +487,11 @@ func readStickCalibrationFromSPIFlash(j *Joycon) error {
 	if j.IsLeft() {
 		lsc := unmarshalLeftStickCalibration(stickCalibration)
 		j.StickCalibration = lsc
-		// log.Printf("Left Stick Calibration:\nX Axis Max Above Center: %d\nY Axis Max Above Center: %d\nX Axis Center: %d\nY Axis Center: %d\nX Axis Min Above Center: %d\nY Axis Min Above Center: %d\n", lsc.XAxisMaxAboveCenter, lsc.YAxisMaxAboveCenter, lsc.XAxisCenter, lsc.YAxisCenter, lsc.XAxisMinBelowCenter, lsc.YAxisMinBelowCenter)
+		j.StickCalibration.Deadzone = deadzone
 	} else if j.IsRight() {
 		rsc := unmarshalRightStickCalibration(stickCalibration)
 		j.StickCalibration = rsc
-		// log.Printf("Right Stick Calibration:\nX Axis Center: %d\nY Axis Center: %d\nX Axis Min Center: %d\nY Axis Min Center: %d\nX Axis Max Above Center: %d\nY Axis Max Above Center: %d\n", rsc.XAxisCenter, rsc.YAxisCenter, rsc.XAxisMinBelowCenter, rsc.YAxisMinBelowCenter, rsc.XAxisMaxAboveCenter, rsc.YAxisMaxAboveCenter)
-		// log.Printf("Right stick X-axis min/max range: [%d, %d]; Right stick Y-axis min/max range: [%d, %d]", rstick_x_min, rstick_x_max, rstick_y_min, rstick_y_max)
+		j.StickCalibration.Deadzone = deadzone
 	}
 
 	return nil
