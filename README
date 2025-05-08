@@ -1,0 +1,8 @@
+# README
+
+## Running on Raspberry PI
+Must have an arm compliler installed such as arm-linux-gnueabi-gcc
+Must have libudev packaged installed
+
+## Updating environment variables
+go env -w <GO_ENV_NAME>=<value> (e.g. go env -w GOARCH=arm)

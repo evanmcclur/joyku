@@ -64,15 +64,6 @@ func QueryDevice(device *RokuDevice) error {
 	return nil
 }
 
-// PingDevice tests whether or not the given roku device is reachable
-func PingDevice(device *RokuDevice) (bool, error) {
-	_, err := device.httpClient.Get(fmt.Sprintf("http://%s:%d/query/device-info", device.ip, device.port))
-	if err != nil {
-		return false, fmt.Errorf("unable to ping %s device: %w", device.Name, err)
-	}
-	return true, nil
-}
-
 func (r *RokuDevice) SendKeypress(key Keypress) {
 	now := time.Now()
 

@@ -1,0 +1,70 @@
+package components
+
+import "joyku/pkg/joycon"
+import "fmt"
+
+func getJoyconColor(jc *joycon.Joycon) templ.SafeCSS {
+    var r, g, b, a uint32
+    if jc.BodyColor != nil {
+        r, g, b, a = jc.BodyColor.RGBA()
+        // Unshift RGBA values
+        r >>= 8
+        g >>= 8
+        b >>= 8
+        a >>= 8
+    }
+    return templ.SafeCSS(fmt.Sprintf("fill: rgba(%d, %d, %d, %d);", r, g, b, a),)
+}
+
+templ RenderJoycon(joycon *joycon.Joycon) {
+    <div class="joycon">
+        if joycon.IsLeft() {
+            <svg style={ getJoyconColor(joycon) } id="left-joycon" xmlns="http://www.w3.org/2000/svg" width="89" height="275" viewBox="0 0 89 275">
+                <path stroke="#fff" d="M50 .5h34.5v274H50C22.662 274.5.5 252.338.5 225V50C.5 22.662 22.662.5 50 .5Z"></path>
+                <circle cx="42.5" cy="77.5" r="22.5" fill="#D9D9D9"></circle>
+                <circle cx="42.5" cy="129.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="42.5" cy="159.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="27.5" cy="144.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="57.5" cy="144.5" r="7.5" fill="#D9D9D9"></circle>
+                <path fill="#D9D9D9" d="M62.05 14H74.8v5H62.05zM85 14h4v230h-4zM47 185h15v15H47z"></path>
+                <circle cx="54.5" cy="192.5" r="6.5" fill="#515151"></circle>
+            </svg>
+        } else if joycon.IsRight() {
+            <svg style={ getJoyconColor(joycon) } id="right-joycon" xmlns="http://www.w3.org/2000/svg" width="89" height="275" viewBox="0 0 89 275">
+                <path stroke="#fff" d="M39 274.5H4.5V.5H39C66.338.5 88.5 22.662 88.5 50v175c0 27.338-22.162 49.5-49.5 49.5Z"></path>
+                <circle cx="43.5" cy="144.5" r="22.5" fill="#D9D9D9"></circle>
+                <circle cx="43.5" cy="62.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="43.5" cy="92.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="28.5" cy="77.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="58.5" cy="77.5" r="7.5" fill="#D9D9D9"></circle>
+                <path fill="#D9D9D9" d="M13 14h15v5H13z"></path>
+                <path fill="#D9D9D9" d="M18 9h5v15h-5z"></path>
+                <circle cx="30.5" cy="192.5" r="7.5" fill="#D9D9D9"></circle>
+                <circle cx="30.5" cy="192.5" r="5.5" fill="#484848"></circle>
+                <path fill="#D9D9D9" d="M0 14h4v230H0z"></path>
+            </svg>
+        }
+        <div class="info" hx-vals="js:{'joycon': document.querySelector('p > .serial-number').textContent}">
+            if joycon.IsLeft() {
+                <h3>Left Joycon</h3>
+            } else if joycon.IsRight() {
+                <h3>Right Joycon</h3>
+            }
+            <p>Serial: <span class="serial-number">{ joycon.Serial }</span></p>
+            <p>Battery: Unknown</p>
+            if !joycon.IsConnected() {
+                <button class="btn" 
+                        role="button" 
+                        hx-post="/connect" 
+                        hx-target="closest .joycon">Connect</button>
+            } else {
+                <button class="btn" 
+                        role="button" 
+                        hx-post="/disconnect" 
+                        hx-confirm="Are you sure you want to disconnect this Joycon?"
+                        hx-target="#joycon-container"
+                        sse-connect="/events">Disconnect</button>
+            }
+        </div>
+    </div>
+}

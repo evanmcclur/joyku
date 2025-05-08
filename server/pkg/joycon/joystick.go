@@ -5,19 +5,19 @@ import (
 	"math"
 )
 
-type StickDirection uint8
+type StickDirection byte
 
 const (
 	InvalidStickDirection StickDirection = iota
-	None
-	StickUp
-	StickUpperRight
-	StickRight
-	StickLowerRight
-	StickDown
-	StickLowerLeft
-	StickLeft
-	StickUpperLeft
+	NoStickDirection                     // No direction - this is equivalent to not touching the joystick
+	StickUp                              // Joystick is pointing north
+	StickUpperRight                      // Joystick is pointing north east
+	StickRight                           // Joystick is pointing east
+	StickLowerRight                      // Joystick is pointing south east
+	StickDown                            // Joystick is pointing south
+	StickLowerLeft                       // Joystick is pointing south west
+	StickLeft                            // Joystick is pointing west
+	StickUpperLeft                       // Joystick is pointing north west
 )
 
 func (d StickDirection) String() string {
@@ -25,20 +25,20 @@ func (d StickDirection) String() string {
 	case StickUp:
 		return "Up"
 	case StickUpperRight:
-		return "Upper right"
+		return "Upper Right"
 	case StickRight:
 		return "Right"
 	case StickLowerRight:
-		return "Lower right"
+		return "Lower Right"
 	case StickDown:
 		return "Down"
 	case StickLowerLeft:
-		return "Lower left"
+		return "Lower Left"
 	case StickLeft:
 		return "Left"
 	case StickUpperLeft:
-		return "Upper left"
-	case None:
+		return "Upper Left"
+	case NoStickDirection:
 		return "Center"
 	default:
 		return "Invalid"
@@ -59,10 +59,10 @@ type StickCalibration struct {
 	YAxisCenter         uint16
 	YAxisMinBelowCenter uint16
 	YAxisMaxAboveCenter uint16
-	Deadzone            uint8
+	Deadzone            byte
 }
 
-func unmarshalLeftStickCalibration(calibration []byte) StickCalibration {
+func unmarshalLeftStick(calibration []byte) StickCalibration {
 	sc := StickCalibration{}
 	sc.XAxisMaxAboveCenter = ((uint16(calibration[1]) << 8) & 0xF00) | uint16(calibration[0])
 	sc.YAxisMaxAboveCenter = (uint16(calibration[2]) << 4) | (uint16(calibration[1]) >> 4)
@@ -73,7 +73,7 @@ func unmarshalLeftStickCalibration(calibration []byte) StickCalibration {
 	return sc
 }
 
-func unmarshalRightStickCalibration(calibration []byte) StickCalibration {
+func unmarshalRightStick(calibration []byte) StickCalibration {
 	sc := StickCalibration{}
 	sc.XAxisCenter = ((uint16(calibration[1]) << 8) & 0xF00) | uint16(calibration[0])
 	sc.YAxisCenter = (uint16(calibration[2]) << 4) | (uint16(calibration[1]) >> 4)
@@ -93,9 +93,9 @@ func calculateStickDirection(sd StickData, sc StickCalibration) StickDirection {
 	stick_x_center := float64((stick_x_min + stick_x_max) / 2)
 	stick_y_center := float64((stick_y_min + stick_y_max) / 2)
 
+	// Determine if stick magnitude is within deadzone and return no direction if so
 	if math.Pow((float64(sd.Horizontal)-stick_x_center), 2)+math.Pow((float64(sd.Vertical)-stick_y_center), 2) < math.Pow(float64(sc.Deadzone), 2) {
-		// joystick is within deadzone - no direction
-		return None
+		return NoStickDirection
 	}
 
 	x := clamp((float64(sd.Horizontal) - stick_x_center) / (stick_x_center - 1))

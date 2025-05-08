@@ -1,0 +1,8 @@
+package components
+
+templ Events() {
+	<div class="event-log" sse-connect="/events">
+		<h3 class="title">Event Log</h3>
+		<div class="event-list" sse-swap="test" hx-swap="afterbegin"></div>
+	</div>
+}

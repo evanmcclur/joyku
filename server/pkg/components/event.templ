@@ -1,0 +1,10 @@
+package components
+
+import "strconv"
+
+templ RenderEvent(test int) {
+    <div class="event">
+        <h4>Test Event</h4>
+        <p>This is packet: { strconv.Itoa(test) }</p>
+    </div>
+}
