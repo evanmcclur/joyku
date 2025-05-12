@@ -1,42 +1,53 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"joyku/internal/bluez"
 	"joyku/pkg/joycon"
 	"joyku/pkg/roku"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 func main() {
-	// parse arguments while ignoring program path
+	// The first argument is the program path, grab everything after that
 	args := os.Args[1:]
 	if len(args) < 2 {
 		fmt.Println("Missing command-line arguments")
+		printHelp()
 		os.Exit(1)
 	}
 
 	manualArg := args[0]
 	if manualArg != "--manual" && manualArg != "-m" {
 		fmt.Println("Missing manual command-line argument")
+		printHelp()
 		os.Exit(1)
 	}
 
-	manual := args[1] == "true"
-	run(manual)
-}
-
-func run(manual bool) {
 	// Quit channel should be used for signaling when we need to terminate the program
 	quit := make(chan os.Signal, 1)
 	defer close(quit)
 
-	// Subscribe to interrupt and sigint events so we can shutdown
+	// Subscribe to interrupt and sigint events so we can shutdown gracefully
 	signal.Notify(quit, os.Interrupt, syscall.SIGINT)
 
+	manual := strings.EqualFold(args[1], "true")
+	run(manual, quit)
+}
+
+// printHelp prints example cli usage string to standard output
+func printHelp() {
+	fmt.Println("usage: joyku_cli (--manual | -m) <boolean>")
+}
+
+func run(manual bool, quit <-chan os.Signal) {
 	// Setup Roku device connection
 	cfg, err := roku.NewRokuConfig()
 	if err != nil {
@@ -49,39 +60,84 @@ func run(manual bool) {
 	}
 	log.Printf("Successfully connected to %s!\n", rokuDevice.Name)
 
+	start := func(search func() []*joycon.Joycon) {
+		joycons := search()
+		if len(joycons) == 0 {
+			fmt.Println("No Joycons were found!")
+			return
+		}
+		fmt.Printf("Found %d Joycons\n", len(joycons))
+
+		mux := joycon.NewMultiplexer()
+		for _, joycon := range joycons {
+			if err := joycon.Connect(); err != nil {
+				fmt.Printf("Failed to connect to %s\n, skipping: %s", joycon.Name, err)
+				continue
+			}
+			mux.Join(joycon)
+			defer joycon.Disconnect()
+		}
+
+		for {
+			select {
+			case js, ok := <-mux.Output():
+				if !ok {
+					log.Println("Joycon status channel closed, shutting down")
+					return
+				}
+				log.Println(js.String())
+			case <-quit:
+				log.Println("Received SIGINT, shutting down")
+				return
+			}
+		}
+	}
+
 	// Find and connect to Joycons
 	//
 	// MANUAL YES: Look for devices already connected to the system.
 	// MANUAL NO: Attempt to find a Joycon using bluetooth and connect it to the system.
 
-	joycons := joycon.FindAll()
-	if len(joycons) == 0 {
-		log.Fatalln("No joycons paired to system.")
+	if manual {
+		start(manualConnect)
+	} else {
+		start(wirelessConnect)
 	}
-	log.Printf("Found %d joycon(s)!\n", len(joycons))
+}
 
-	joyconDevice := joycons[0]
-	for _, jc := range joycons {
-		err := jc.Connect()
-		if err != nil {
-			log.Fatalf("Could not connect to joycon: %s\n", err.Error())
-		}
-		defer jc.Disconnect()
+func manualConnect() []*joycon.Joycon {
+	return joycon.FindAll()
+}
+
+func wirelessConnect() []*joycon.Joycon {
+	joycons := make([]*joycon.Joycon, 0)
+
+	conn, err := bluez.Init()
+	if err != nil {
+		fmt.Printf("Could not create BlueZ D-Bus connection, err: %s\n", err)
+		return joycons
+	}
+	defer conn.Close()
+
+	// TODO: Look into extending this function so it can accept a context from main
+	// TODO: Add CLI argument to set timeout duration
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
+	defer cancel()
+
+	conn.Adapter().SetDiscoveryFilter(bluez.JoyconFilter)
+	scanC, err := conn.Adapter().Scan(ctx)
+	if err != nil {
+		fmt.Printf("Could not start bluetooth scan, err: %s\n", err)
+		return joycons
 	}
 
-	for {
-		select {
-		case js, ok := <-joyconDevice.Status():
-			if !ok {
-				log.Println("Joycon status channel closed, shutting down")
-				return
-			}
-			log.Println(js.String())
-		case <-quit:
-			log.Println("Received sigterm, shutting down")
-			return
+	for device := range scanC {
+		joycon := joycon.Find(device.Address)
+		if joycon != nil {
+			joycons = append(joycons, joycon)
 		}
 	}
+	return joycons
 }
 
 // TODO: Cleanup below

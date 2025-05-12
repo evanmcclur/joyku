@@ -1,6 +1,11 @@
 package roku
 
-import "github.com/spf13/viper"
+import (
+	"os"
+	"path"
+
+	"github.com/spf13/viper"
+)
 
 type RokuConfig struct {
 	Ip   string `mapstructure:"ROKU_IP"`
@@ -12,7 +17,12 @@ type RokuConfig struct {
 func NewRokuConfig() (*RokuConfig, error) {
 	rc := &RokuConfig{}
 
-	viper.AddConfigPath("../../")
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	viper.AddConfigPath(path.Dir(wd))
 	viper.SetConfigName("roku")
 	viper.SetConfigType("env")
 	viper.AutomaticEnv()
