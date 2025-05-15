@@ -1,0 +1,22 @@
+: Note:
+This is the structure of a dbus signal on the InterfacesAdded member
+
+body: [/org/bluez/hci0/dev_D4_F0_57_EA_32_39 -> map[org.bluez.Device1 -> map[
+        Adapter:@o "/org/bluez/hci0"
+        Address:"<some mac address>"
+        AddressType:"public"
+        Alias:"<some name>"
+        Blocked:false
+        Bonded:false
+        Connected:false
+        LegacyPairing:false
+        Name:"<some name>"
+        Paired:false
+        RSSI:@n -85
+        ServiceData:{"0000fe0f-0000-1000-8000-00805f9b34fb": <@ay [0x65, 0x10, 0xff, 0xff, 0x2]>}
+        ServicesResolved:false
+        Trusted:false
+        UUIDs:["0000fe0f-0000-1000-8000-00805f9b34fb"]
+    ]
+    org.freedesktop.DBus.Introspectable:map[] org.freedesktop.DBus.Properties:map[]]
+]
